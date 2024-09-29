@@ -1,0 +1,142 @@
+!pip install optuna
+
+!pip install lightgbm==3.3.2
+
+!pip install ptitprince
+
+from sklearn.decomposition import PCA
+import numpy as np
+import pandas as pd
+import optuna
+from sklearn.model_selection import KFold
+from sklearn.metrics import roc_auc_score
+import lightgbm as lgb
+import ptitprince as pt
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# CSVファイルのパス
+csv_training_filepath = 'Training_dataset.csv'
+csv_test_filepath = 'Test_dataset.csv'
+
+# CSVファイルの読み込み
+df_training = pd.read_csv(csv_training_filepath)
+SubID = df_training['SubID']
+Flag = df_training['Flag']
+X_train = df_training.drop(columns = ['SubID', 'Flag'])
+df_training =  np.array(df_training.drop(columns = ['SubID', 'Flag']))
+
+df_test = pd.read_csv(csv_test_filepath)
+SubID2 = df_test['SubID']
+Flag2 = df_test['Flag']
+X_test = df_test.drop(columns = ['SubID', 'Flag'])
+df_test = np.array(df_test.drop(columns = ['SubID', 'Flag']))
+
+# PCAの適用
+n_components = 10
+pca = PCA(n_components=n_components)
+pca.fit(df_training)
+X_train_pca = pca.transform(df_training)
+X_test_pca = pca.transform(df_test)
+
+# 各主成分の寄与率と固有スペクトル（固有ベクトル）の取得
+explained_variance_ratio = pca.explained_variance_ratio_
+cumulative_variance_ratio = explained_variance_ratio.cumsum()
+eigenvectors = pca.components_
+
+X_train_pca = pd.DataFrame(X_train_pca, columns=['PC1', 'PC2', 'PC3', 'PC4', 'PC5', 'PC6', 'PC7', 'PC8', 'PC9', 'PC10'])
+X_test_pca = pd.DataFrame(X_test_pca, columns=['PC1', 'PC2', 'PC3', 'PC4', 'PC5', 'PC6', 'PC7', 'PC8', 'PC9', 'PC10'])
+# X_train_pca = pd.DataFrame(X_train_pca, columns=['PC1', 'PC2', 'PC3', 'PC4', 'PC5', 'PC6'])
+# X_test_pca = pd.DataFrame(X_test_pca, columns=['PC1', 'PC2', 'PC3', 'PC4', 'PC5', 'PC6'])
+# X_train_pca = pd.DataFrame(X_train_pca, columns=['PC1', 'PC2', 'PC3'])
+# X_test_pca = pd.DataFrame(X_test_pca, columns=['PC1', 'PC2', 'PC3'])
+X_train_pca['SubID'] = SubID
+X_train_pca['Flag'] = Flag
+X_test_pca['SubID'] = SubID2
+X_test_pca['Flag'] = Flag2
+
+# X_train_pca.to_csv('train_pca.csv')
+# X_test_pca.to_csv('test_pca.csv')
+
+def objective(trial):
+    # Define the hyperparameters to be tuned
+    params = {
+        'objective': 'regression',
+        'metric': 'mse',
+        'boosting_type': 'gbdt',
+        'num_leaves': trial.suggest_int('num_leaves', 10, 1000),
+        'learning_rate': trial.suggest_loguniform('learning_rate', 0.001, 0.1),
+        'feature_fraction': trial.suggest_uniform('feature_fraction', 0.1, 1.0),
+        'bagging_fraction': trial.suggest_uniform('bagging_fraction', 0.1, 1.0),
+        'max_depth': trial.suggest_int('max_depth', 3, 20),
+        'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
+        'lambda_l1': trial.suggest_loguniform('lambda_l1', 1e-8, 10.0),
+        'lambda_l2': trial.suggest_loguniform('lambda_l2', 1e-8, 10.0),
+    }
+
+    # Perform 5-fold cross-validation
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    auc_scores = []
+
+    for fold, (train_index, val_index) in enumerate(kf.split(X_train), 1):
+        X_train_fold, X_val_fold = X_train.iloc[train_index], X_train.iloc[val_index]
+        y_train_fold, y_val_fold = y_train.iloc[train_index], y_train.iloc[val_index]
+
+        train_data = lgb.Dataset(X_train_fold, label=y_train_fold)
+        val_data = lgb.Dataset(X_val_fold, label=y_val_fold, reference=train_data)
+
+        model = lgb.train(params, train_data, valid_sets=[train_data, val_data], verbose_eval=False, early_stopping_rounds=50)
+
+        y_pred_proba = model.predict(X_val_fold, num_iteration=model.best_iteration)
+        auc = roc_auc_score(y_val_fold, y_pred_proba)
+        auc_scores.append(auc)
+
+        print(f"Fold {fold}: AUC = {auc}")
+
+    # Calculate the average AUC across folds
+    avg_auc = np.mean(auc_scores)
+    return 1 - avg_auc  # Optimize for 1 - AUC because Optuna minimizes the objective
+
+# Load your dataset here
+X_train = X_train_pca.drop(columns = ['SubID', 'Flag'])
+y_train = Flag
+
+# Create and run the Optuna study
+study = optuna.create_study(direction='minimize')
+study.optimize(objective, n_trials=500)
+
+# Print the best hyperparameters and their corresponding AUC
+best_params = study.best_params
+best_auc = 1 - study.best_value  # Convert back to AUC
+print("Best Hyperparameters:", best_params)
+print("Best AUC:", best_auc)
+
+# Train the final model on the entire dataset using the best hyperparameters
+final_model = lgb.train(best_params, lgb.Dataset(X_train, label=y_train))
+
+# Now, you can make predictions on new data
+X_test = X_test_pca.drop(columns = ['SubID', 'Flag'])
+y_pred_proba = final_model.predict(X_test)
+
+df_graph = pd.DataFrame({'Value': y_pred_proba})
+df_graph['Category'] = Flag2
+
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+ax = pt.RainCloud(data=df_graph, x='Category', y='Value', orient="h", pointplot=True)
+# sns.boxplot(x='Value', y='Category', data=df_graph, orient='h')
+
+from sklearn.metrics import roc_curve
+fpr, tpr, thresholds = roc_curve(df_graph['Category'], df_graph['Value'])
+youden_index = np.argmax((1-fpr)+tpr)
+threshold = thresholds[youden_index]
+predictions = (df_graph['Value'] > threshold).astype(int)
+threshold
+
+auc = roc_auc_score(df_graph['Category'], df_graph['Value'])
+auc
+
+explained_variance_ratio
+
+df_graph.to_csv('test.csv')
