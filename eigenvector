@@ -1,0 +1,85 @@
+import numpy as np
+import pandas as pd
+import sklearn
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from IPython.display import display
+
+Train_set = pd.read_csv('Training_dataset.csv')
+Test_set = pd.read_csv("Test_dataset.csv")
+
+x_train = Train_set.iloc[:,0:30]
+y_train = Train_set[["Flag"]]
+x_test = Test_set.iloc[:,0:30]
+y_test = Test_set[["Flag"]]
+
+pca = PCA()
+pca.fit(x_train)
+
+pca_cor_train = pca.transform(x_train)
+
+std_sc = StandardScaler()
+std_sc.fit(x_train)
+std_train_data = std_sc.transform(x_train)
+std_train_data_df = pd.DataFrame(std_train_data, columns = x_train.columns)
+display(std_train_data_df)
+
+pca = PCA()
+pca.fit(std_train_data_df)
+# データを主成分空間に写像
+pca_cor = pca.transform(std_train_data_df)
+
+eig_vec = pd.DataFrame(pca.components_.T, index = x_train.columns, \
+                          columns = ["PC{}".format(x + 1) for x in range(len(std_train_data_df.columns))])
+display(eig_vec)
+
+eig = pd.DataFrame(pca.explained_variance_, index=["PC{}".format(x + 1) for x in range(len(std_train_data_df.columns))], columns=['固有値']).T
+display(eig)
+
+vex=eig_vec.values
+vex
+
+std_sc = StandardScaler()
+std_sc.fit(x_test)
+std_data_test = std_sc.transform(x_test)
+std_data_test_df = pd.DataFrame(std_data_test, columns = x_test.columns)
+display(std_data_test_df)
+
+test = x_test.values
+
+test
+
+test.dot(vex)
+
+std_deviation = np.std(x_train)
+mean_value = np.mean(x_train)
+
+std_deviation
+
+mean_value
+
+z_scores = (x_test - mean_value) / std_deviation
+z_scores
+
+z_scores = z_scores.values
+z_scores
+
+z_scores.dot(vex)
+
+test_df = pd.DataFrame(z_scores, columns=['ChZ Theta', 'ChZ Low Alpha', 'ChZ Mid Alpha','ChZ High Alpha','ChZ Low Beta','ChZ High Beta','ChZ Gamma','ChZ Brainrate','ChZ Alpha','ChZ Beta','ChR Theta', 'ChR Low Alpha', 'ChR Mid Alpha','ChR High Alpha','ChR Low Beta','ChR High Beta','ChR Gamma','ChR Brainrate','ChR Alpha','ChR Beta','ChL Theta', 'ChL Low Alpha', 'ChL Mid Alpha','ChL High Alpha','ChL Low Beta','ChL High Beta','ChL Gamma','ChL Brainrate','ChL Alpha','ChL Beta'])
+test_df
+
+pca = PCA()
+pca.fit(test_df)
+# データを主成分空間に写像
+pca_cor = pca.transform(test_df)
+
+eig = pd.DataFrame(pca.explained_variance_, index=["PC{}".format(x + 1) for x in range(len(test_df.columns))], columns=['固有値']).T
+display(eig)
+
+t_ev = pd.DataFrame(pca.explained_variance_ratio_.cumsum(), index=["PC{}".format(x + 1) for x in range(len(test_df.columns))], columns=['累積寄与率']).T
+display(t_ev)
+
+print('主成分得点')
+cor = pd.DataFrame(pca_cor, columns=["PC{}".format(x + 1) for x in range(len(test_df.columns))])
+display(cor)
